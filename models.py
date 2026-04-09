@@ -129,12 +129,7 @@ def evaluate_trajectory_score(state: EpisodeState) -> float:
     """
     Deterministic grader evaluating actions sequentially over the full episode trajectory.
     
-    The score is strictly bounded within [0.0, 1.0].
-    
-    Trajectory Awareness:
-        - Heavy penalties are applied if a malicious IP is actively allowed.
-        - In the HARD task, abruptly blocking a suspicious IP without first flagging it
-          will incur a significant trajectory penalty compared to proper investigation.
+    The score is strictly bounded within (0.0, 1.0) exclusive.
     """
     task = AVAILABLE_TASKS[state.task_difficulty]
     
@@ -144,7 +139,7 @@ def evaluate_trajectory_score(state: EpisodeState) -> float:
         max_score += len(task.suspicious_ips) * 0.5
         
     if max_score <= 0.0:
-        return 1.0
+        return 0.999  # Changed from 1.0 to obey exclusive bounds
 
     score = 0.0
     trajectory_penalties = 0.0
@@ -161,7 +156,6 @@ def evaluate_trajectory_score(state: EpisodeState) -> float:
         ip_final_status[ip] = cmd
         ip_action_history.setdefault(ip, []).append(cmd)
         
-        # Immediate penalty for allowing known malicious traffic (trajectory penalty)
         if cmd == "allow_traffic" and ip in task.malicious_ips:
             trajectory_penalties += 0.3
 
@@ -179,9 +173,9 @@ def evaluate_trajectory_score(state: EpisodeState) -> float:
         if status == "allow_traffic": 
             score += 0.5
         elif status == "block_ip": 
-            score -= 1.0  # Heavy penalty for blocking benign traffic
+            score -= 1.0
 
-    # 4. Score suspicious targets (Trajectory-aware for HARD task)
+    # 4. Score suspicious targets
     if task.difficulty == TaskDifficulty.HARD:
         for ip in task.suspicious_ips:
             status = ip_final_status.get(ip)
@@ -190,11 +184,10 @@ def evaluate_trajectory_score(state: EpisodeState) -> float:
             if status == "flag_for_review": 
                 score += 0.5
             elif status == "block_ip":
-                # Trajectory-aware penalty: Blocking an ambiguous IP without investigation
                 if "flag_for_review" not in history:
                     trajectory_penalties += 0.4
                 score -= 0.25
 
-    # 5. Compile final score and normalize safely within [0.0, 1.0]
+    # 5. Compile final score and normalize safely within (0.0, 1.0) exclusive
     final_score = score - trajectory_penalties
-    return max(0.0, min(1.0, final_score / max_score))
+    return max(0.001, min(0.999, final_score / max_score))
